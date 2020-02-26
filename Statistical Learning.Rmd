@@ -1,0 +1,347 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+Using a training and test dataset.
+
+Note:  From the NHANES help file, "NHANES can be treated, for educational purposes, as if it were a simple random sample from the American population."
+
+```{r}
+library(pacman)
+p_load(mdsr, NHANES, tidyverse, Amelia, rpart)
+
+data(NHANES)
+head(NHANES)
+help("NHANES")
+```
+
+Note that there is a lot of missing data in the NHANES dataset.  Start by removing columns with a high percentage of missing values.  They remove row where there is a missing value of the target variable.
+
+```{r}
+missmap(NHANES, main = "Missing values vs observed")
+```
+
+Determine missing rates for each column.
+
+Here is a nice blog post about [different ways to count na's over multiple columns](https://sebastiansauer.github.io/sum-isna/).
+
+# number of missing values in each column
+
+```{r}
+sapply(NHANES, function(x) sum(is.na(x)))
+```
+
+
+# number of unique values in each column
+
+```{r}
+sapply(NHANES, function(x) length(unique(x)))
+```
+
+
+```{r}
+NHANES %>% count()
+
+NHANES %>%
+  select(everything()) %>%  # replace to your needs
+  summarise_all(funs(sum(is.na(.))/10000))
+  
+```
+
+Remove an columns with a rate of missing that is too high.
+
+```{r}
+NHANES2 <- NHANES[, colMeans(is.na(NHANES)) < 0.5] 
+
+NHANES2 %>%
+  select(everything()) %>%  # replace to your needs
+  summarise_all(funs(sum(is.na(.))/10000))
+```
+
+Remove the ID variable.
+
+```{r}
+NHANES2 <- NHANES2 %>% select(-ID)
+NHANES2 <- NHANES2 %>% select(SleepTrouble, everything())
+NHANES2
+```
+
+```{r}
+NHANES2$SleepTrouble[1:10]
+
+as.numeric(NHANES2$SleepTrouble[1:10])
+
+as.numeric(NHANES2$SleepTrouble[1:10]) - 1
+
+NHANES2$SleepTrouble <- as.numeric(NHANES2$SleepTrouble) - 1
+
+NHANES2$SleepTrouble[1:10]
+
+str(NHANES2)
+```
+
+```{r}
+missmap(NHANES2, main = "Missing values vs observed")
+```
+
+# number of missing values in each column
+
+```{r}
+sapply(NHANES2, function(x) sum(is.na(x)))
+```
+
+
+# number of unique values in each column
+
+```{r}
+sapply(NHANES2, function(x) length(unique(x)))
+```
+
+Remove all rows of the dataset where SleepTrouble is missing.
+
+```{r}
+NHANES3 <- NHANES2 %>% drop_na(SleepTrouble)
+NHANES3
+```
+
+```{r}
+missmap(NHANES3, main = "Missing values vs observed")
+```
+
+# number of missing values in each column
+
+```{r}
+sapply(NHANES3, function(x) sum(is.na(x)))
+```
+
+
+# number of unique values in each column
+
+```{r}
+sapply(NHANES3, function(x) length(unique(x)))
+```
+
+
+### Model 1. Null Model.
+
+
+```{r}
+# set up trainning and test data sets
+
+indx <- sample(1:nrow(NHANES3), as.integer(0.9*nrow(NHANES3)))
+head(indx)
+
+NHANES3_train <- NHANES3[indx,]
+NHANES3_test <- NHANES3[-indx,]
+```
+
+
+```{r}
+NHANES3_train %>%
+  group_by(SleepTrouble) %>%
+  summarise (n = n()) %>%
+  mutate(freq = n / sum(n))
+```
+
+```{r}
+NHANES3_test %>%
+  group_by(SleepTrouble) %>%
+  summarise (n = n()) %>%
+  mutate(freq = n / sum(n))
+```
+
+### Model 2. Logistics Regression.
+
+**Forward:** Add variables one at a time.  For the same variables coded differently, pick one way to include the variable, for example Age and AgeDecade, keep AgeDecade.  HHIncome and HHIncome Mid, keep HHIncome. 
+Note that the variable SexAge seems to cause a problem when fitting the model.
+
+```{r}
+NHANES3 <- NHANES3 %>% select(-SexAge, -SleepHrsNight) %>%
+  na.omit()
+
+dim(NHANES3)
+```
+
+```{r}
+# set up trainning and test data sets
+
+indx <- sample(1:nrow(NHANES3), as.integer(0.9*nrow(NHANES3)))
+head(indx)
+
+NHANES3_train <- NHANES3[indx,]
+NHANES3_test <- NHANES3[-indx,]
+```
+
+```{r}
+model <- glm(SleepTrouble ~ SurveyYr +
+               Gender +   Race1 + 
+               HomeRooms + HomeOwn + Work + Weight + 
+               BPSys1 + BPSys2 + TotChol + HealthGen +
+               DaysPhysHlthBad + DaysMentHlthBad + LittleInterest +
+               Depressed + PhysActive +
+               Smoke100 + HardDrugs + 
+               SexEver + SexNumPartnLife 
+               ,family=binomial(link='logit'), data = NHANES3_train)
+summary(model)
+```
+
+```{r}
+# check Accuracy
+# trainning
+
+fitted.results <- predict(model, newdata = NHANES3_train, type = 'response')
+head(fitted.results)
+
+fitted.results <- ifelse(fitted.results > 0.5,1,0)
+head(fitted.results)
+
+head(NHANES3_train$SleepTrouble)
+
+misClasificError <- mean(fitted.results != NHANES3_train$SleepTrouble, na.rm=TRUE)
+print(paste('Accuracy',1-misClasificError))
+
+# test
+
+fitted.results <- predict(model, newdata = NHANES3_test, type = 'response')
+head(fitted.results)
+
+fitted.results <- ifelse(fitted.results > 0.5,1,0)
+head(fitted.results)
+
+head(NHANES3_test$SleepTrouble)
+
+misClasificError <- mean(fitted.results != NHANES3_test$SleepTrouble, na.rm=TRUE)
+print(paste('Accuracy',1-misClasificError))
+```
+
+```{r}
+# ROC
+# Because this data set is so small, it is possible that the test data set
+# does not contain both 0 and 1 values.  If this happens the code will not
+# run.  And since the test data set is so small the ROC is not useful here
+# but the code is provided.
+
+library(ROCR)
+
+#trainning
+
+p <- predict(model, newdata=NHANES3_train, type="response")
+pr <- prediction(p, NHANES3_train$SleepTrouble)
+prf <- performance(pr, measure = "tpr", x.measure = "fpr")
+plot(prf)
+
+auc <- performance(pr, measure = "auc")
+auc <- auc@y.values[[1]]
+auc
+
+# test
+
+p <- predict(model, newdata=NHANES3_test, type="response")
+pr <- prediction(p, NHANES3_test$SleepTrouble)
+prf <- performance(pr, measure = "tpr", x.measure = "fpr")
+plot(prf)
+
+auc <- performance(pr, measure = "auc")
+auc <- auc@y.values[[1]]
+auc
+```
+
+### Model 3. Decision Tree.  CART.  
+
+Start over with NHANES2
+
+```{r}
+NHANES3 <- NHANES2 %>% select(-SleepHrsNight) %>% 
+  drop_na(SleepTrouble)
+NHANES3
+```
+
+
+```{r}
+# set up trainning and test data sets
+
+indx <- sample(1:nrow(NHANES3), as.integer(0.9*nrow(NHANES3)))
+head(indx)
+
+NHANES3_train <- NHANES3[indx,]
+NHANES3_test <- NHANES3[-indx,]
+```
+
+
+```{r}
+library(rpart)
+m.rpart <- rpart(SleepTrouble ~ ., data = NHANES3_train)
+
+summary(m.rpart)
+```
+
+```{r}
+# get basic information about the tree
+m.rpart
+
+# get more detailed information about the tree
+summary(m.rpart)
+
+# use the rpart.plot package to create a visualization
+library(rpart.plot)
+
+# a basic decision tree diagram
+rpart.plot(m.rpart, digits = 3)
+
+# a few adjustments to the diagram
+rpart.plot(m.rpart, digits = 4, fallen.leaves = TRUE, type = 3, extra = 101)
+```
+
+```{r}
+## generate predictions for the testing dataset
+p.rpart <- predict(m.rpart, NHANES3_test)
+p.rpart
+
+# compare the distribution of predicted values vs. actual values
+summary(p.rpart)
+summary(NHANES3_test$SleepTrouble)
+```
+
+
+```{r}
+# check Accuracy
+# trainning
+
+fitted.results <- predict(m.rpart, newdata = NHANES3_train)
+head(fitted.results)
+
+fitted.results <- ifelse(fitted.results > 0.5,1,0)
+head(fitted.results)
+
+head(NHANES3_train$SleepTrouble)
+
+misClasificError <- mean(fitted.results != NHANES3_train$SleepTrouble, na.rm=TRUE)
+print(paste('Accuracy',1-misClasificError))
+
+# test
+
+fitted.results <- predict(model, newdata = NHANES3_test)
+head(fitted.results)
+
+fitted.results <- ifelse(fitted.results > 0.5,1,0)
+head(fitted.results)
+
+head(NHANES3_test$SleepTrouble)
+
+misClasificError <- mean(fitted.results != NHANES3_test$SleepTrouble, na.rm=TRUE)
+print(paste('Accuracy',1-misClasificError))
+```
+
+```{r}
+library(ROCR)
+
+p <- predict(m.rpart, newdata=NHANES3_test)
+pr <- prediction(p, NHANES3_test$SleepTrouble)
+prf.c50 <- performance(pr, measure = "tpr", x.measure = "fpr")
+plot(prf.c50)
+
+auc <- performance(pr, measure = "auc")
+auc.c50 <- auc@y.values[[1]]
+auc.c50
+```
